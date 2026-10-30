@@ -10,6 +10,7 @@ import { adminRefunds, customerRefunds } from './refunds.ts'
 import { change, getOrder, settle, settleDue, type Order, type Status } from './order-state.ts'
 import { ApiError, body, cookie, hash, json, randomToken, readCookie, type Env, type Value } from './platform.ts'
 import { authRoute, requireAdmin } from './admin-auth.ts'
+import { localDemoRoute } from './local-demo.ts'
 import { emailValue, mailConfigured, partnerAuth } from './partner-auth.ts'
 import { adminPartnerRoutes, partnerCatalog, partnerRoutes, resolvePartner } from './partners.ts'
 import { paymentAction, reconcilePayments } from './payments/service.ts'
@@ -65,6 +66,8 @@ function requiredNote(data: Record<string, unknown>) {
 export async function commerce(request: Request, env: Env): Promise<Response> {
   try {
     const url = new URL(request.url); const path = url.pathname; const method = request.method
+    const demo = await localDemoRoute(request, env, path)
+    if (demo) return demo
     const auth = await authRoute(request, env, path)
     if (auth) return auth
     const partnerLogin = await partnerAuth(request, env, path)

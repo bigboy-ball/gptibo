@@ -28,6 +28,7 @@ import { BrandMark, ProductMark } from '@/components/brand'
 import { VisitorStats } from '@/components/visitor-stats'
 import { CopyButton } from '@/components/copy-button'
 import { Children, ChildOrders } from './Children'
+import { LocalDemoLogin } from '@/components/LocalDemoLogin'
 import { api, errorMessage, RequestError } from '@/lib/api'
 import { Feedback, Pagination } from './shared'
 import { profitLabel } from './order-labels'
@@ -40,7 +41,7 @@ import '../styles/motion.css'
 import './partner.css'
 import './workspace.css'
 
-type Session = { authenticated: boolean; mailReady: boolean }
+type Session = { demo?: boolean; demoAvailable?: boolean; authenticated: boolean; mailReady: boolean }
 type PartnerFulfillment = { rechargeStatus?: string | null; failureCode?: string | null; errorCategory?: string | null; progressStage?: string | null; progressUpdatedAt?: number | null; attemptNo?: number | null; canSubmit?: boolean; message?: string | null; failureReason?: string | null; accountEmailMasked?: string | null; finishedAt?: number | null; recoveryAction?: string | null }
 type PartnerOrder = { fulfillment?: PartnerFulfillment | null; updated_at?: number; serviceMessage?: string; delivery?: { status: string; sentAt?: number | null }; rechargeReference?: { order_id?: string; redemption_id?: string }; id: string; customer_email: string | null; plan: string; plan_name: string; price_cents: number; cost_cents: number; profit_cents: number; refunded_cents: number; platform_payment_status?: string | null; platform_refunded_cents?: number | null; platform_checked_at?: number | null; refund_hold: number; mode: string; status: string; recharge_status?: string | null; payment_status: string; payout_status: string | null; created_at: number }
 const orderProductName = (o: PartnerOrder) => emailProduct(o.plan) || o.plan === 'codex-sms-once'
@@ -328,8 +329,10 @@ function PayoutDialog({ amount, account, onClose, onSaved }: { amount: number; a
 }
 function Workspace({
   preview,
+  demo = false,
   onLogout,
 }: {
+  demo?: boolean
   preview?: string
   onLogout: () => void
 }) {
@@ -470,7 +473,9 @@ function Workspace({
   const content: Record<string, ReactNode> = data
     ? {
         tickets: <TicketWorkspace revision={revision} active={current.id === 'tickets'} />,
-        stores: (
+        stores: demo ? (
+          <ProductManagement endpoint={prefix + '/product-order'} plans={data.plans} readOnly={false} disabled={loading || Boolean(error)} onSaved={saved} storeUrl={url} />
+        ) : (
           <StoresWorkspace
             prefix={prefix}
             revision={revision}
@@ -784,11 +789,12 @@ export default function PartnerApp() {
   async function verify() { if (!loginHuman.ready || busy) return; setBusy(true); setError(''); setInvalidCode(false); try { await api('/api/partner/auth/verify', { email, code, ...loginHuman.consume() }); setCode(''); await check() } catch (e) { setError(errorMessage(e)); setInvalidCode(e instanceof RequestError && e.status === 401) } finally { setBusy(false) } }
   async function logout() { try { await api('/api/partner/auth/logout', {}); clearSession(); setSent(false); setCode('') } catch (e) { setError(errorMessage(e)) } }
   if (!preview && !session && !error) return <WorkspaceBoot />
-  if (preview || session?.authenticated) return <><Feedback error={error} /><Workspace preview={preview} onLogout={() => void logout()} /></>
+  if (preview || session?.authenticated) return <>{session?.demo && <p role="status" className="admin-code-help">本地演示模式 · 操作保存在本地数据库 · 会话一小时后过期</p>}<Feedback error={error} /><Workspace preview={preview} demo={session?.demo} onLogout={() => void logout()} /></>
   return <main className="partner-login"><a className="partner-login-back" href="/"><ArrowLeft size={15} />返回商店</a><section className="partner-login-panel" aria-labelledby="partner-login-title">
     <a className="partner-login-brand" href="/" aria-label="GPTibo 首页"><BrandMark /><strong>Recharge <span>AI</span></strong></a>
     <header className="partner-login-heading"><h1 id="partner-login-title">登录代理工作台</h1><p>使用开通邮箱和邮件验证码登录。</p></header>
-    {!session ? <><Feedback error={error} />{error ? <Button onClick={() => void check()} variant="outline">重新连接</Button> : <Feedback loading />}</> : !session.mailReady ? <div className="admin-setup"><h2>邮件服务待启用</h2><p>请联系平台管理员启用邮箱验证码。</p><Button variant="outline" onClick={() => void check()}>重新检查</Button></div> : <form className="partner-login-form" onSubmit={e => { e.preventDefault(); void verify() }}>
+    {session?.demoAvailable && <LocalDemoLogin kind="partner" onLogin={check} />}
+    {!session ? <><Feedback error={error} />{error ? <Button onClick={() => void check()} variant="outline">重新连接</Button> : <Feedback loading />}</> : session.demoAvailable ? null : !session.mailReady ? <div className="admin-setup"><h2>邮件服务待启用</h2><p>请联系平台管理员启用邮箱验证码。</p><Button variant="outline" onClick={() => void check()}>重新检查</Button></div> : <form className="partner-login-form" onSubmit={e => { e.preventDefault(); void verify() }}>
       <FieldGroup>
         <Field><FieldLabel htmlFor="partner-email">登录邮箱</FieldLabel><Input id="partner-email" type="email" autoComplete="email" placeholder="输入开通邮箱" value={email} onChange={e => { setEmail(e.target.value); setSent(false); setCode(''); setError(''); setInvalidCode(false) }} required maxLength={254} disabled={busy} /></Field>
         {sendHuman.widget}

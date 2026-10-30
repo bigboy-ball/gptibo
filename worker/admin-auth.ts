@@ -1,6 +1,7 @@
 import { ApiError, body, cookie, hash, json, LOGIN_SESSION_SECONDS, randomToken, readCookie, type Env } from './platform.ts'
 import { validTotpSecret, verifyTotp } from './totp.ts'
 import { sendVerificationEmail } from './email.ts'
+import { demoAdminAuthenticated, demoLogout, localDemoEnabled } from './local-demo.ts'
 
 // Server-owned destination; request parameters cannot override it.
 export function adminLoginEmail(env: Env) {
@@ -17,6 +18,7 @@ const credentialVersion = (env: Env) => hash('admin-email-totp-v1:' + adminLogin
 const codeHash = (env: Env, version: string, id: string, code: string) => hash('admin-email:' + env.ADMIN_TOTP_SECRET + ':' + version + ':' + id + ':' + code)
 const invalidLogin = () => new ApiError('用户名、邮箱验证码或 2FA 验证码不正确，或验证码已失效。', 401)
 export async function requireAdmin(request: Request, env: Env) {
+  if (await demoAdminAuthenticated(request, env)) return
   if (!configured(env)) throw new ApiError('管理员验证器尚未配置，请先完成服务器初始化。', 503)
   const token = readCookie(request, 'admin')
   if (!token) throw new ApiError('请先登录管理后台。', 401)
@@ -29,9 +31,11 @@ async function reserveAttempt(env: Env, key: string, now: number, maximum: numbe
 }
 export async function authRoute(request: Request, env: Env, path: string) {
   if (path === '/api/admin/session' && request.method === 'GET') {
-    if (!configured(env)) return json({ configured: false, authenticated: false, mailReady: mailReady(env) })
-    try { await requireAdmin(request, env); return json({ configured: true, authenticated: true, mailReady: mailReady(env), username: env.ADMIN_USERNAME }) }
-    catch (e) { if (e instanceof ApiError && e.status === 401) return json({ configured: true, authenticated: false, mailReady: mailReady(env) }); throw e }
+    const demoAvailable = localDemoEnabled(request, env)
+    if (await demoAdminAuthenticated(request, env)) return json({ configured: configured(env), authenticated: true, mailReady: mailReady(env), username: '本地演示管理员', demoAvailable, demo: true })
+    if (!configured(env)) return json({ configured: false, authenticated: false, mailReady: mailReady(env), demoAvailable })
+    try { await requireAdmin(request, env); return json({ configured: true, authenticated: true, mailReady: mailReady(env), username: env.ADMIN_USERNAME, demoAvailable }) }
+    catch (e) { if (e instanceof ApiError && e.status === 401) return json({ configured: true, authenticated: false, mailReady: mailReady(env), demoAvailable }); throw e }
   }
   if (path === '/api/admin/login/email-code' && request.method === 'POST') {
     const data = await body(request), db = env.INTEREST_DB
@@ -92,6 +96,8 @@ export async function authRoute(request: Request, env: Env, path: string) {
     return json({ ok: true }, 200, { 'Set-Cookie': cookie(request, 'admin', token, LOGIN_SESSION_SECONDS) })
   }
   if (path === '/api/admin/logout' && request.method === 'POST') {
+    const demo = await demoLogout(request, env, 'admin')
+    if (demo) return demo
     await body(request)
     const token = readCookie(request, 'admin')
     if (token) await env.INTEREST_DB.prepare('DELETE FROM admin_sessions WHERE token_hash = ?').bind(await hash(token)).run()

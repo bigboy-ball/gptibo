@@ -1,5 +1,6 @@
 import { sendPartnerInvitationEmail, sendVerificationEmail } from './email.ts'
 import { ApiError, body, cookie, hash, json, LOGIN_SESSION_SECONDS, randomToken, readCookie, type Env } from './platform.ts'
+import { demoLogout, demoPartnerSession, localDemoEnabled } from './local-demo.ts'
 
 export type Partner = { id: string; slug: string; name: string; email: string; active: number; version: number; auth_version: number; created_at: number }
 export const mailConfigured = (env: Env) => Boolean(env.RESEND_API_KEY && env.RESEND_FROM && env.PARTNER_AUTH_SECRET && env.PARTNER_AUTH_SECRET.length >= 32)
@@ -14,6 +15,8 @@ export async function partnerLimit(env: Env, key: string, max: number, duration:
   if (!row || row.attempts > max) throw new ApiError('操作过于频繁，请稍后重试。', 429)
 }
 export async function requirePartner(request: Request, env: Env): Promise<Partner> {
+  const demo = await demoPartnerSession(request, env)
+  if (demo) return demo
   const token = readCookie(request, 'partner')
   if (!token || !env.PARTNER_AUTH_SECRET) throw new ApiError('请先登录代理工作台。', 401)
   const partner = await env.INTEREST_DB.prepare('SELECT p.* FROM partner_sessions s JOIN partners p ON p.id=s.partner_id WHERE s.token_hash=? AND s.expires_at>? AND s.auth_version=p.auth_version AND s.credential_version=? AND p.active=1').bind(await hash(token), Date.now(), await hash(env.PARTNER_AUTH_SECRET)).first<Partner>()
@@ -52,10 +55,13 @@ export async function sendPartnerCode(env: Env, p: Partner) {
 }
 export async function partnerAuth(request: Request, env: Env, path: string) {
   if (path === '/api/partner/auth/session' && request.method === 'GET') {
-    try { const p = await requirePartner(request, env); return json({ authenticated: true, mailReady: mailConfigured(env), name: p.name }) }
-    catch (e) { if (e instanceof ApiError && e.status === 401) return json({ authenticated: false, mailReady: mailConfigured(env) }); throw e }
+    const demoAvailable = localDemoEnabled(request, env)
+    try { const p = await requirePartner(request, env); return json({ authenticated: true, mailReady: mailConfigured(env), name: p.name, demoAvailable, demo: Boolean(await demoPartnerSession(request, env)) }) }
+    catch (e) { if (e instanceof ApiError && e.status === 401) return json({ authenticated: false, mailReady: mailConfigured(env), demoAvailable }); throw e }
   }
   if (path === '/api/partner/auth/logout' && request.method === 'POST') {
+    const demo = await demoLogout(request, env, 'partner')
+    if (demo) return demo
     await body(request); const token = readCookie(request, 'partner')
     if (token) await env.INTEREST_DB.prepare('DELETE FROM partner_sessions WHERE token_hash=?').bind(await hash(token)).run()
     return json({ ok: true }, 200, { 'Set-Cookie': cookie(request, 'partner', '', 0) })

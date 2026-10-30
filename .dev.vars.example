@@ -1,4 +1,6 @@
 # Copy to .dev.vars and set independent local credentials.
+# Local Workers demo login: HTTP loopback only; never enable on deployment.
+LOCAL_DEMO_ENABLED="false"
 ADMIN_USERNAME= # Configure locally; never commit a real value.
 ADMIN_EMAIL= # Configure locally; never commit a real value.
 ADMIN_TOTP_SECRET= # Configure locally; never commit a real value.
